@@ -1,0 +1,182 @@
+// Pin definitions
+int trigger_frente = A1; // Front sensor trigger pin
+int echo_frente = A2; // Front sensor echo pin
+int trigger_left = A3; // Left sensor trigger pin
+int echo_left = A4; // Left sensor echo pin
+int trigger_right = 6; // Right sensor trigger pin
+int echo_right = 7; // Right sensor echo pin
+
+int motorPin1 = 2; // L298N IN1
+int motorPin2 = 3; // L298N IN2
+int motorPin3 = 4; // L298N IN3
+int motorPin4 = 5; // L298N IN4
+int enablePinA = 9; // L298N ENA
+int enablePinB = 10; // L298N ENB
+
+unsigned long lastTurnTime = 0; // Variable to track time between turns
+
+void setup() {
+    Serial.begin(9600); // Initialize Serial Monitor
+    pinMode(trigger_frente, OUTPUT);
+    pinMode(echo_frente, INPUT);
+    pinMode(trigger_left, OUTPUT);
+    pinMode(echo_left, INPUT);
+    pinMode(trigger_right, OUTPUT);
+    pinMode(echo_right, INPUT);
+
+    pinMode(motorPin1, OUTPUT);
+    pinMode(motorPin2, OUTPUT);
+    pinMode(motorPin3, OUTPUT);
+    pinMode(motorPin4, OUTPUT);
+    pinMode(enablePinA, OUTPUT);
+    pinMode(enablePinB, OUTPUT);
+
+    stop(); // Set initial motor states to stopped
+    delay(2000); // Delay to prepare for motor movement
+}
+
+void loop() {
+    int distance_frente = getAverageDistance(trigger_frente, echo_frente);
+    int distance_left = getAverageDistance(trigger_left, echo_left);
+    int distance_right = getAverageDistance(trigger_right, echo_right);
+
+    // Print distances to Serial Monitor
+    Serial.print("Front: ");
+    Serial.print(distance_frente);
+    Serial.print(" cm | Left: ");
+    Serial.print(distance_left);
+    Serial.print(" cm | Right: ");
+    Serial.print(distance_right);
+    Serial.println(" cm");
+
+    // Dynamic Speed Adjustment
+    int speed = map(distance_frente, 20, 50, 150, 255); // Increase minimum distance threshold
+    speed = constrain(speed, 150, 255);
+    analogWrite(enablePinA, speed);
+    analogWrite(enablePinB, speed);
+
+    if (distance_frente > 30) { // Increased threshold for clearer path
+        forward();
+    } else if (distance_right > distance_left + 10) { // Right path is clearer with margin
+        turnRight(distance_right);
+    } else if (distance_left > distance_right + 10) { // Left path is clearer with margin
+        turnLeft(distance_left);
+    } else { // All paths blocked or equally clear
+        reverseAndReevaluate(distance_frente);
+    }
+
+    delay(100); // Reduced delay for smoother operation
+}
+
+// Distance measurement with averaging
+int getDistance(int triggerPin, int echoPin) {
+    long duration;
+    digitalWrite(triggerPin, LOW);
+    delayMicroseconds(2);
+    digitalWrite(triggerPin, HIGH);
+    delayMicroseconds(10);
+    digitalWrite(triggerPin, LOW);
+    duration = pulseIn(echoPin, HIGH, 30000); // 30 ms timeout
+
+    if (duration == 0) return 300; // Return max distance if no echo received
+    return duration / 29 / 2;
+}
+
+int getAverageDistance(int triggerPin, int echoPin) {
+    int total = 0;
+    for (int i = 0; i < 10; i++) {
+        total += getDistance(triggerPin, echoPin);
+        delay(10);
+    }
+    return total / 10;
+}
+
+void forward() {
+    digitalWrite(motorPin1, HIGH);
+    digitalWrite(motorPin2, LOW);
+    digitalWrite(motorPin3, HIGH);
+    digitalWrite(motorPin4, LOW);
+    Serial.println("Moving forward");
+}
+
+// Dynamic turn right
+void turnRight(int distance_right) {
+    int turnDelay = map(distance_right, 10, 50, 300, 600); // Adjust turn duration
+    analogWrite(enablePinA, 150); // Reduced speed for smooth turn
+    analogWrite(enablePinB, 150);
+    digitalWrite(motorPin1, LOW);
+    digitalWrite(motorPin2, HIGH);
+    digitalWrite(motorPin3, HIGH);
+    digitalWrite(motorPin4, LOW);
+    Serial.print("Turning right for ");
+    Serial.print(turnDelay);
+    Serial.println(" ms");
+    delay(turnDelay);
+}
+
+// Dynamic turn left
+void turnLeft(int distance_left) {
+    int turnDelay = map(distance_left, 10, 50, 300, 600); // Adjust turn duration
+    analogWrite(enablePinA, 150); // Reduced speed for smooth turn
+    analogWrite(enablePinB, 150);
+    digitalWrite(motorPin1, HIGH);
+    digitalWrite(motorPin2, LOW);
+    digitalWrite(motorPin3, LOW);
+    digitalWrite(motorPin4, HIGH);
+    Serial.print("Turning left for ");
+    Serial.print(turnDelay);
+    Serial.println(" ms");
+    delay(turnDelay);
+}
+
+// Reverse with dynamic delay based on proximity
+void reverseAndReevaluate(int distance_frente) {
+    int reverseDelay = map(distance_frente, 5, 20, 400, 600); // Dynamic reverse delay
+    reverse(reverseDelay);
+
+    // Re-evaluate after reversing
+    distance_frente = getAverageDistance(trigger_frente, echo_frente);
+    int distance_left = getAverageDistance(trigger_left, echo_left);
+    int distance_right = getAverageDistance(trigger_right, echo_right);
+
+    // Timeout to avoid frequent turns in tight spaces
+    unsigned long currentMillis = millis();
+    if (currentMillis - lastTurnTime < 1000) { // Less than 1 second between turns
+        turnRight(60); // Larger turn to get out of loop
+        delay(1000); // Extra delay to prevent looping
+    }
+    lastTurnTime = currentMillis;
+
+    // Decision logic after reevaluation
+    if (distance_frente > 30) {
+        forward();
+    } else if (distance_right > distance_left) {
+        turnRight(distance_right);
+    } else {
+        turnLeft(distance_left);
+    }
+}
+
+void reverse(int reverseDelay) {
+    digitalWrite(motorPin1, LOW);
+    digitalWrite(motorPin2, HIGH);
+    digitalWrite(motorPin3, LOW);
+    digitalWrite(motorPin4, HIGH);
+    analogWrite(enablePinA, 200);
+    analogWrite(enablePinB, 200);
+    Serial.print("Reversing for ");
+    Serial.print(reverseDelay);
+    Serial.println(" ms");
+    delay(reverseDelay);
+    stop();
+}
+
+void stop() {
+    digitalWrite(motorPin1, LOW);
+    digitalWrite(motorPin2, LOW);
+    digitalWrite(motorPin3, LOW);
+    digitalWrite(motorPin4, LOW);
+    analogWrite(enablePinA, 0);
+    analogWrite(enablePinB, 0);
+    Serial.println("Stopped");
+}
